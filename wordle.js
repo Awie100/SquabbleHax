@@ -1,6 +1,9 @@
 const statusMsg = document.getElementById("status");
 const video = document.getElementById("video");
+
 const canvas = document.getElementById("canvas");
+const context = canvas.getContext('2d');
+
 const gdmOptions = {
     video: true,
     audio: false
@@ -9,7 +12,26 @@ const gdmOptions = {
 var wordList;
 var wordFreq;
 var mainInterval;
-var capturing = false;
+var guessing = false;
+
+
+var vPos = {
+    x: 465,
+    y: 585
+}
+
+var cPos = {
+    x: 0,
+    y: 0
+}
+
+var mPos = {
+    x: 0,
+    y: 0
+}
+
+var topLeft = false;
+
 
 fetch("word_freq.json").then(response => response.json()).then(json => {
     wordFreq = json;
@@ -24,47 +46,106 @@ function startCapture() {
         .then((media) => {
             video.srcObject = media;
             updateStatus("Ready To Go!")
+
+            mainInterval = setTimeout(function run() {
+                captureVideo();
+
+                mainInterval = setTimeout(run);
+            });
         })
         .catch(err => console.log(err));
 }
 
-function onCaptureVideo() {
-    if(capturing) {
-        clearTimeout(mainInterval);
-        updateStatus("Paused.");
-    } else {
-        mainInterval = setTimeout(function run() {
-            captureVideo();
-            mainInterval = setTimeout(run);
-        }, 1000);
-    }
-
-    capturing = !capturing;
-
+function resetCaptureBox() {
+    guessing = false;
 }
 
 function captureVideo() {
-    var ctx = canvas.getContext('2d');
-    ctx.drawImage(video, -465, -585);
-    const data = filterBlack(ctx);
+    if (guessing) {
+        drawGuessing();
+    } else {
+        setBoundingBox();
+    }
+}
+
+function setBoundingBox() {
+    updateStatus("Hold and Drag to Select the Playing Area.");
+    canvas.width = window.innerWidth * (3 / 4);
+    canvas.height = (canvas.width / video.videoWidth) * video.videoHeight;
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    if (topLeft) {
+        context.beginPath();
+        context.rect(cPos.x, cPos.y, mPos.x - cPos.x, mPos.y - cPos.y);
+        context.strokeStyle = "white";
+        context.stroke();
+    }
+}
+
+canvas.addEventListener('mousedown', mouseDown);
+canvas.addEventListener('mouseup', mouseUp);
+canvas.addEventListener('mousemove', mouseMove)
+
+function mouseDown(evt) {
+    if (!(guessing || topLeft)) {
+        vPos = getMousePosVideo(evt);
+        cPos = getMousePosCanvas(evt);
+        topLeft = true;
+    }
+}
+
+function mouseUp(evt) {
+    if (!guessing && topLeft) {
+        var pos = getMousePosVideo(evt);
+        canvas.width = pos.x - vPos.x;
+        canvas.height = pos.y - vPos.y;
+
+        guessing = true;
+        topLeft = false;
+    }
+}
+
+function mouseMove(evt) {
+    mPos = getMousePosCanvas(evt);
+}
+
+function getMousePosVideo(evt) {
+    var rect = canvas.getBoundingClientRect();
+    return {
+        x: (evt.clientX - rect.left) / rect.width * video.videoWidth,
+        y: (evt.clientY - rect.top) / rect.height * video.videoHeight
+    }
+}
+
+function getMousePosCanvas(evt) {
+    var rect = canvas.getBoundingClientRect();
+    return {
+        x: (evt.clientX - rect.left) / rect.width * canvas.width,
+        y: (evt.clientY - rect.top) / rect.height * canvas.height
+    }
+}
+
+function drawGuessing() {
+    context.drawImage(video, -vPos.x, -vPos.y);
+    const data = filterBlack(context);
 
     const result = OCRAD(data);
     //console.log(result);
 
     const text = filterText(result);
 
-    const letterList = letterArray(text, ctx);
+    const letterList = letterArray(text, context);
     //console.log(letterList);
 
     const filteredWordList = filterWordList(letterList, wordList);
-    filteredWordList.sort((a,b) => wordFreq[b] - wordFreq[a]);
+    filteredWordList.sort((a, b) => wordFreq[b] - wordFreq[a]);
 
     updateStatus(printList(filteredWordList, 3));
     //console.log(filteredWordList);
 }
 
-function filterBlack(ctx) {
-    var imgData = ctx.getImageData(0, 0, 390, 475);
+function filterBlack() {
+    var imgData = context.getImageData(0, 0, canvas.width, canvas.height);
     //data is an array it cantais rgb value data[0],data[1],data[2] respectively
     var data = imgData.data;
     //Searchin each pixel and replacing it with constra
@@ -96,21 +177,22 @@ function filterText(exp) {
     return exp;
 }
 
-function letterArray(string, ctx) {
-    var imgData = ctx.getImageData(0, 0, 390, 475);
+function letterArray(string) {
+    var imgData = context.getImageData(0, 0, canvas.width, canvas.height);
     var data = imgData.data;
-    var letterList = { "at": new Set(), "in": new Set(), "notin": new Set()};
 
-    const px = 20;
-    const dx = 75;
-    const py = 30;
-    const dy = 75;
+    var letterList = { "at": new Set(), "in": new Set(), "notin": new Set() };
+
+    const px = parseInt(canvas.width / 20);
+    const dx = parseInt(canvas.width / 5);
+    //console.log(canvas.width);
+
     for (let index = 0; index < string.length; index++) {
-        const dataIndex = (px + (index % 5) * dx) + 390 * (py + parseInt(index / 5) * dy);
+        const dataIndex = (px + (index % 5) * dx) + canvas.width * (px + parseInt(index / 5) * dx);
         const red = data[dataIndex * 4];
-        data[dataIndex * 4] = 0;
-        data[dataIndex * 4 + 1] = 0;
-        data[dataIndex * 4 + 2] = 0;
+        data[dataIndex * 4] = 255;
+        data[dataIndex * 4 + 1] = 255;
+        data[dataIndex * 4 + 2] = 255;
 
         if (red < 50) {
             letterList.at.add([string.charAt(index), index % 5]);
@@ -120,7 +202,6 @@ function letterArray(string, ctx) {
             letterList.notin.add(string.charAt(index));
         }
     }
-    ctx.putImageData(imgData, 0, 0);
     letterList.at = Array.from(letterList.at);
     const foundLetters = letterList.at.map((val, ind) => val[0]);
 
@@ -128,6 +209,8 @@ function letterArray(string, ctx) {
     const inLetters = letterList.in.map((val, ind) => val[0]);
 
     letterList.notin = Array.from(letterList.notin).filter(elem => !(foundLetters.includes(elem) || inLetters.includes(elem)));
+    
+    context.putImageData(imgData, 0, 0);
     return letterList;
 }
 
@@ -156,7 +239,7 @@ function updateStatus(msg) {
 function printList(stuff, num) {
     var outStr = "";
 
-    if(stuff.length < num) {
+    if (stuff.length < num) {
         num = stuff.length;
     }
 
