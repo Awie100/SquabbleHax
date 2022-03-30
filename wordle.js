@@ -20,18 +20,8 @@ var vPos = {
     y: 585
 }
 
-var cPos = {
-    x: 0,
-    y: 0
-}
-
-var mPos = {
-    x: 0,
-    y: 0
-}
-
-var topLeft = false;
-
+var px = 0;
+var dx = 0;
 
 fetch("word_freq.json").then(response => response.json()).then(json => {
     wordFreq = json;
@@ -69,51 +59,42 @@ function captureVideo() {
 }
 
 function setBoundingBox() {
-    updateStatus("Hold and Drag to Select the Playing Area.");
+    updateStatus("Once in a Game, Click on the first box (highlighted) to begin.");
     canvas.width = window.innerWidth * (3 / 4);
     canvas.height = (canvas.width / video.videoWidth) * video.videoHeight;
     context.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-    if (topLeft) {
-        context.beginPath();
-        context.rect(cPos.x, cPos.y, mPos.x - cPos.x, mPos.y - cPos.y);
-        context.strokeStyle = "white";
-        context.stroke();
-    }
 }
 
 canvas.addEventListener('mousedown', mouseDown);
-canvas.addEventListener('mouseup', mouseUp);
-canvas.addEventListener('mousemove', mouseMove)
 
 function mouseDown(evt) {
-    if (!(guessing || topLeft)) {
-        vPos = getMousePosVideo(evt);
-        cPos = getMousePosCanvas(evt);
-        topLeft = true;
-    }
-}
+    if (!guessing) {
+        let cPos = getMousePosCanvas(evt);
+        cPos = canvasToVideoPos(cPos);
 
-function mouseUp(evt) {
-    if (!guessing && topLeft) {
-        var pos = getMousePosVideo(evt);
-        canvas.width = pos.x - vPos.x;
-        canvas.height = pos.y - vPos.y;
+        canvas.width = video.videoWidth
+        canvas.height = video.videoHeight
+        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+        cPos.x = parseInt(cPos.x);
+        cPos.y = parseInt(cPos.y);
+
+        //console.log(cPos);
+
+        const filterCanvas = filterBlack();
+        const box = getFirstBox(filterCanvas.data, cPos);
+        //console.log(box);
+
+        canvas.height = box.dims.x * 7.5;
+        canvas.width = box.dims.y * 6.2;
+
+        vPos.x = parseInt(box.pos.x - box.dims.x / 5);
+        vPos.y = parseInt(box.pos.y - box.dims.y / 5);
+
+        px = parseInt(box.dims.x * 0.4);
+        dx = parseInt(box.dims.x * 1.22);
 
         guessing = true;
-        topLeft = false;
-    }
-}
-
-function mouseMove(evt) {
-    mPos = getMousePosCanvas(evt);
-}
-
-function getMousePosVideo(evt) {
-    var rect = canvas.getBoundingClientRect();
-    return {
-        x: (evt.clientX - rect.left) / rect.width * video.videoWidth,
-        y: (evt.clientY - rect.top) / rect.height * video.videoHeight
     }
 }
 
@@ -125,9 +106,16 @@ function getMousePosCanvas(evt) {
     }
 }
 
+function canvasToVideoPos(pos) {
+    return {
+        x: pos.x / canvas.width * video.videoWidth,
+        y: pos.y / canvas.height * video.videoHeight
+    }
+}
+
 function drawGuessing() {
     context.drawImage(video, -vPos.x, -vPos.y);
-    const data = filterBlack(context);
+    const data = filterBlack();
 
     const result = OCRAD(data);
     //console.log(result);
@@ -165,6 +153,57 @@ function filterBlack() {
     return imgData;
 }
 
+function getFirstBox(pxData, pos) {
+    var bounds = {
+        pos: {
+            x: 0,
+            y: 0
+        },
+        dims: {
+            x: 0,
+            y: 0
+        }
+    }
+
+    //top
+    for (let index = pos.y; index > 0; index--) {
+        const dataIndex = (pos.x) + canvas.width * (index);
+        if(pxData[dataIndex * 4] == 0) {
+            bounds.pos.y = index;
+            break;
+        }
+    }
+
+    //botton
+    for (let index = pos.y; index < canvas.height; index++) {
+        const dataIndex = (pos.x) + canvas.width * (index);
+        if(pxData[dataIndex * 4] == 0) {
+            bounds.dims.y = index - bounds.pos.y;
+            break;
+        }
+    }
+
+    //left
+    for (let index = pos.x; index > 0; index--) {
+        const dataIndex = (index) + canvas.width * (pos.y);
+        if(pxData[dataIndex * 4] == 0) {
+            bounds.pos.x = index;
+            break;
+        }
+    }
+
+    //right
+    for (let index = pos.x; index < canvas.width; index++) {
+        const dataIndex = (index) + canvas.width * (pos.y);
+        if(pxData[dataIndex * 4] == 0) {
+            bounds.dims.x = index - bounds.pos.x;
+            break;
+        }
+    }
+
+    return bounds
+}
+
 function filterText(exp) {
     //filter letters
     exp = exp.replace("|", "I");
@@ -181,11 +220,9 @@ function letterArray(string) {
     var imgData = context.getImageData(0, 0, canvas.width, canvas.height);
     var data = imgData.data;
 
-    var letterList = { "at": new Set(), "in": new Set(), "notin": new Set() };
 
-    const px = parseInt(canvas.width / 20);
-    const dx = parseInt(canvas.width / 5);
-    //console.log(canvas.width);
+
+    var letterList = { "at": new Set(), "in": new Set(), "notin": new Set() };
 
     for (let index = 0; index < string.length; index++) {
         const dataIndex = (px + (index % 5) * dx) + canvas.width * (px + parseInt(index / 5) * dx);
